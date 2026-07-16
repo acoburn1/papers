@@ -23,6 +23,7 @@ Open the local address printed in the terminal. Paper data is saved automaticall
 - Numeric sorting within groups or across the full library
 - Organized connections, directional dependencies, and topic tags
 - Automatic shared-author detection
+- Clickable, color-coded connection routes with automatic lane assignment and parallel bundling by paper pair
 - Local persistence plus JSON backup/restore
 
 The four example records shown on first launch can be deleted individually or removed with **Clear library**.

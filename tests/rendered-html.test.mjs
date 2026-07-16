@@ -5,6 +5,7 @@ import test from "node:test";
 test("includes local persistence and relationship features", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const packageJson = await readFile(new URL("../package.json", import.meta.url), "utf8");
   assert.match(page, /indexedDB\.open/);
   assert.match(page, /Result dependencies/);
@@ -13,6 +14,16 @@ test("includes local persistence and relationship features", async () => {
   assert.match(page, /priorityOpacity/);
   assert.doesNotMatch(page, /className="priority-column"/);
   assert.match(page, /normalizeLibrary/);
+  assert.match(page, /function ConnectionRail/);
+  assert.match(page, /common_authors/);
+  assert.match(page, /laneSpacing/);
+  assert.match(page, /ConnectionBundle/);
+  assert.match(page, /bundle\.connections\.map/);
+  assert.match(page, /function editConnection/);
+  assert.match(page, /Edit connection/);
+  assert.match(page, /targetOffset = -offset \* direction/);
+  assert.match(styles, /\.connection-rail \{[^}]*pointer-events: auto/);
+  assert.doesNotMatch(page, /Open first paper/);
   assert.match(layout, /title: "papers"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });

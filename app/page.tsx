@@ -8,6 +8,9 @@ type ConnectionType = "shared_topic" | "depends_on" | "supports" | "contrasts" |
 type Paper = { id: string; title: string; year: number; citations: number; priority: number; authors: string[]; links: string[]; mainQuestions: string; mainResults: string; myQuestions: string; understanding: Understanding; interest: number; createdAt: string; updatedAt: string };
 type Connection = { id: string; sourceId: string; targetId: string; type: ConnectionType; topics: string[]; note: string };
 type LibraryState = { papers: Paper[]; connections: Connection[] };
+type VisualConnectionType = ConnectionType | "common_authors";
+type VisualConnection = Omit<Connection, "type"> & { type: VisualConnectionType; automatic?: boolean };
+type ConnectionBundle = { id: string; sourceId: string; targetId: string; connections: VisualConnection[] };
 
 const levels: Record<Understanding, { name: string; short: string; color: string; description: string }> = {
   0: { name: "Reading queue", short: "Unread", color: "#8b8c89", description: "Saved for later" },
@@ -16,6 +19,9 @@ const levels: Record<Understanding, { name: string; short: string; color: string
   3: { name: "Deep understanding", short: "Methods", color: "#397c5c", description: "Can explain the methods and details" },
 };
 const connectionLabels: Record<ConnectionType, string> = { shared_topic: "Common topics", depends_on: "Result dependencies", supports: "Supporting evidence", contrasts: "Contrasts & disagreements", method: "Methods & approaches", related: "Other relationships" };
+const visualConnectionLabels: Record<VisualConnectionType, string> = { common_authors: "Common authors", ...connectionLabels };
+const connectionColors: Record<VisualConnectionType, string> = { common_authors: "#8a949f", supports: "#24543d", depends_on: "#78a96f", shared_topic: "#2f6fb2", contrasts: "#b14b4b", method: "#725b96", related: "#596574" };
+const connectionTypeOrder: VisualConnectionType[] = ["common_authors", "supports", "depends_on", "shared_topic", "contrasts", "method", "related"];
 
 const seedState: LibraryState = {
   papers: ([
@@ -52,19 +58,22 @@ export default function Home() {
   const [grouped, setGrouped] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [paperModal, setPaperModal] = useState<"add" | "edit" | null>(null);
-  const [connectionModal, setConnectionModal] = useState(false);
+  const [connectionModal, setConnectionModal] = useState<"add" | "edit" | null>(null);
+  const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [paperDraft, setPaperDraft] = useState(emptyPaper());
   const [authorDraft, setAuthorDraft] = useState("");
   const [linkDraft, setLinkDraft] = useState("");
   const [connectionDraft, setConnectionDraft] = useState<{ targetId: string; type: ConnectionType; topics: string; note: string }>({ targetId: "", type: "shared_topic", topics: "", note: "" });
   const importRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const ledgerRef = useRef<HTMLElement>(null);
 
   useEffect(() => { readLibrary().then((stored) => { if (stored) setLibrary(normalizeLibrary(stored)); else return writeLibrary(seedState); }).catch(() => setSaveState("error")).finally(() => setReady(true)); }, []);
   useEffect(() => { if (!ready) return; setSaveState("saving"); const timer = window.setTimeout(() => { writeLibrary(library).then(() => setSaveState("saved")).catch(() => setSaveState("error")); }, 180); return () => window.clearTimeout(timer); }, [library, ready]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { if (connectionModal) setConnectionModal(false); else if (paperModal) setPaperModal(null); else setSelectedId(null); }
+      if (event.key === "Escape") { if (connectionModal) setConnectionModal(null); else if (paperModal) setPaperModal(null); else if (selectedConnectionId) setSelectedConnectionId(null); else setSelectedId(null); }
       if (event.key === "/" && !paperModal && !connectionModal && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") { event.preventDefault(); searchRef.current?.focus(); }
     };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
@@ -76,7 +85,39 @@ export default function Home() {
   const displayedGroups = useMemo(() => { if (!grouped) return [{ level: null as Understanding | null, papers: sorted }]; const order: Understanding[] = sortKey === "understanding" && sortDirection === "asc" ? [0, 1, 2, 3] : [3, 2, 1, 0]; return order.map((level) => ({ level, papers: sorted.filter((paper) => paper.understanding === level) })); }, [grouped, sorted, sortKey, sortDirection]);
   const selectedConnections = useMemo(() => selected ? library.connections.filter((item) => item.sourceId === selected.id || item.targetId === selected.id) : [], [selected, library.connections]);
   const automaticAuthorLinks = useMemo(() => selected ? library.papers.filter((paper) => paper.id !== selected.id).map((paper) => ({ paper, authors: commonAuthors(selected, paper) })).filter((item) => item.authors.length > 0) : [], [selected, library.papers]);
+  const visualConnections = useMemo<VisualConnection[]>(() => {
+    const automatic: VisualConnection[] = [];
+    for (let left = 0; left < library.papers.length; left += 1) {
+      for (let right = left + 1; right < library.papers.length; right += 1) {
+        const authors = commonAuthors(library.papers[left], library.papers[right]);
+        if (authors.length) automatic.push({ id: `authors:${library.papers[left].id}:${library.papers[right].id}`, sourceId: library.papers[left].id, targetId: library.papers[right].id, type: "common_authors", topics: authors, note: `${authors.join(", ")} ${authors.length === 1 ? "is an author" : "are authors"} on both papers.`, automatic: true });
+      }
+    }
+    return [...library.connections, ...automatic];
+  }, [library.papers, library.connections]);
+  const connectionBundles = useMemo<ConnectionBundle[]>(() => {
+    const bundles = new Map<string, ConnectionBundle>();
+    visualConnections.forEach((connection) => {
+      const [sourceId, targetId] = [connection.sourceId, connection.targetId].sort();
+      const id = `bundle:${sourceId}:${targetId}`;
+      const existing = bundles.get(id);
+      if (existing) existing.connections.push(connection);
+      else bundles.set(id, { id, sourceId, targetId, connections: [connection] });
+    });
+    return [...bundles.values()].map((bundle) => ({ ...bundle, connections: [...bundle.connections].sort((a, b) => connectionTypeOrder.indexOf(a.type) - connectionTypeOrder.indexOf(b.type) || a.id.localeCompare(b.id)) }));
+  }, [visualConnections]);
+  const selectedConnectionBundle = connectionBundles.find((bundle) => bundle.id === selectedConnectionId);
+  const selectedConnectionSource = library.papers.find((paper) => paper.id === selectedConnectionBundle?.sourceId);
+  const selectedConnectionTarget = library.papers.find((paper) => paper.id === selectedConnectionBundle?.targetId);
+  const editingConnection = library.connections.find((connection) => connection.id === editingConnectionId);
+  const connectionSourcePaper = connectionModal === "edit" ? library.papers.find((paper) => paper.id === editingConnection?.sourceId) : selected;
   const targetPaper = library.papers.find((paper) => paper.id === connectionDraft.targetId);
+
+  useEffect(() => { if (selectedId) setSelectedConnectionId(null); }, [selectedId]);
+
+  function openVisualConnection(id: string) { setSelectedId(null); setSelectedConnectionId(id); }
+  function openPaperFromConnection(id: string) { setSelectedConnectionId(null); setSelectedId(id); }
+  function openConnectionDetails(connection: Connection) { const [sourceId, targetId] = [connection.sourceId, connection.targetId].sort(); setSelectedId(null); setSelectedConnectionId(`bundle:${sourceId}:${targetId}`); }
 
   function changeSort(next: SortKey) { if (sortKey === next) setSortDirection((current) => current === "asc" ? "desc" : "asc"); else { setSortKey(next); setSortDirection(next === "title" ? "asc" : "desc"); } }
   function openAdd() { setPaperDraft(emptyPaper()); setAuthorDraft(""); setLinkDraft(""); setPaperModal("add"); }
@@ -90,8 +131,18 @@ export default function Home() {
   }
   function updateSelected(field: "mainQuestions" | "mainResults" | "myQuestions", value: string) { if (!selected) return; setLibrary((current) => ({ ...current, papers: current.papers.map((paper) => paper.id === selected.id ? { ...paper, [field]: value, updatedAt: new Date().toISOString() } : paper) })); }
   function deleteSelected() { if (!selected || !window.confirm(`Delete “${selected.title}” and all of its connections?`)) return; setLibrary((current) => ({ papers: current.papers.filter((paper) => paper.id !== selected.id), connections: current.connections.filter((connection) => connection.sourceId !== selected.id && connection.targetId !== selected.id) })); setSelectedId(null); }
-  function openConnection() { const firstTarget = library.papers.find((paper) => paper.id !== selected?.id); setConnectionDraft({ targetId: firstTarget?.id ?? "", type: "shared_topic", topics: "", note: "" }); setConnectionModal(true); }
-  function saveConnection(event: FormEvent) { event.preventDefault(); if (!selected || !connectionDraft.targetId || connectionDraft.targetId === selected.id) return; const connection: Connection = { id: newId("connection"), sourceId: selected.id, targetId: connectionDraft.targetId, type: connectionDraft.type, topics: connectionDraft.topics.split(",").map((item) => item.trim()).filter(Boolean), note: connectionDraft.note.trim() }; setLibrary((current) => ({ ...current, connections: [...current.connections, connection] })); setConnectionModal(false); }
+  function openConnection() { const firstTarget = library.papers.find((paper) => paper.id !== selected?.id); setEditingConnectionId(null); setConnectionDraft({ targetId: firstTarget?.id ?? "", type: "shared_topic", topics: "", note: "" }); setConnectionModal("add"); }
+  function editConnection(id: string) { const connection = library.connections.find((item) => item.id === id); if (!connection) return; setEditingConnectionId(id); setConnectionDraft({ targetId: connection.targetId, type: connection.type, topics: connection.topics.join(", "), note: connection.note }); setConnectionModal("edit"); }
+  function closeConnectionEditor() { setConnectionModal(null); setEditingConnectionId(null); }
+  function saveConnection(event: FormEvent) {
+    event.preventDefault();
+    const sourceId = connectionModal === "edit" ? editingConnection?.sourceId : selected?.id;
+    if (!sourceId || !connectionDraft.targetId || connectionDraft.targetId === sourceId) return;
+    const normalized = { type: connectionDraft.type, topics: connectionDraft.topics.split(",").map((item) => item.trim()).filter(Boolean), note: connectionDraft.note.trim() };
+    if (connectionModal === "edit" && editingConnectionId) setLibrary((current) => ({ ...current, connections: current.connections.map((connection) => connection.id === editingConnectionId ? { ...connection, ...normalized } : connection) }));
+    else { const connection: Connection = { id: newId("connection"), sourceId, targetId: connectionDraft.targetId, ...normalized }; setLibrary((current) => ({ ...current, connections: [...current.connections, connection] })); }
+    closeConnectionEditor();
+  }
   function removeConnection(id: string) { setLibrary((current) => ({ ...current, connections: current.connections.filter((connection) => connection.id !== id) })); }
   function exportLibrary() { const blob = new Blob([JSON.stringify(library, null, 2)], { type: "application/json" }); const anchor = document.createElement("a"); anchor.href = URL.createObjectURL(blob); anchor.download = `paper-ledger-${new Date().toISOString().slice(0, 10)}.json`; anchor.click(); URL.revokeObjectURL(anchor.href); }
   function importLibrary(event: React.ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file) return; file.text().then((text) => { try { const next = JSON.parse(text) as LibraryState; if (!Array.isArray(next.papers) || !Array.isArray(next.connections)) throw new Error("Invalid backup"); setLibrary(normalizeLibrary(next)); setSelectedId(null); } catch { window.alert("That file is not a valid paper-library backup."); } }); event.target.value = ""; }
@@ -106,7 +157,9 @@ export default function Home() {
         <div className="sort-control"><span className="control-label">Sort</span><select value={sortKey} onChange={(event) => changeSort(event.target.value as SortKey)} aria-label="Sort papers"><option value="priority">Priority</option><option value="interest">Interest</option><option value="understanding">Understanding</option><option value="citations">Citations</option><option value="year">Year</option><option value="title">Title</option></select><button className="direction-button" onClick={() => setSortDirection((value) => value === "asc" ? "desc" : "asc")} aria-label={`Sort ${sortDirection === "asc" ? "descending" : "ascending"}`}>{sortDirection === "asc" ? "↑" : "↓"}</button></div>
         <label className="group-toggle"><input type="checkbox" checked={grouped} onChange={(event) => setGrouped(event.target.checked)} /><span aria-hidden="true" />Group by understanding</label>
       </section>
-      <section className="ledger" aria-live="polite">
+      <div className="connection-key" aria-label="Connection color key">{(["common_authors", "supports", "depends_on", "shared_topic", "contrasts", "method"] as VisualConnectionType[]).map((type) => <span key={type}><i style={{ background: connectionColors[type] }} />{visualConnectionLabels[type]}</span>)}</div>
+      <section className="ledger" ref={ledgerRef} aria-live="polite">
+        <ConnectionRail rootRef={ledgerRef} bundles={connectionBundles} layoutKey={`${ready}:${grouped}:${sortKey}:${sortDirection}:${query}:${sorted.map((paper) => paper.id).join(",")}`} selectedId={selectedConnectionId} onSelect={openVisualConnection} />
         {!ready && <div className="loading-line">Opening your local library…</div>}
         {ready && displayedGroups.map((group) => {
           const level = group.level === null ? null : levels[group.level]; if (grouped && group.papers.length === 0) return null;
@@ -116,7 +169,7 @@ export default function Home() {
               <th><SortButton label="Title & authors" column="title" current={sortKey} direction={sortDirection} onSort={changeSort} /></th><th><SortButton label="Year" column="year" current={sortKey} direction={sortDirection} onSort={changeSort} /></th><th><SortButton label="Citations" column="citations" current={sortKey} direction={sortDirection} onSort={changeSort} /></th>{!grouped && <th><SortButton label="Level" column="understanding" current={sortKey} direction={sortDirection} onSort={changeSort} /></th>}<th>Main question</th><th>Main result</th><th>My questions</th><th><SortButton label="Interest" column="interest" current={sortKey} direction={sortDirection} onSort={changeSort} /></th><th>Links</th>
             </tr></thead><tbody>{group.papers.map((paper) => {
               const connectionCount = library.connections.filter((item) => item.sourceId === paper.id || item.targetId === paper.id).length;
-              return <tr key={paper.id} className={selectedId === paper.id ? "selected-row" : ""}>
+              return <tr key={paper.id} data-paper-id={paper.id} className={selectedId === paper.id ? "selected-row" : ""}>
                 <td className="paper-identity"><button className="paper-title" style={{ opacity: priorityOpacity(paper.priority) }} onClick={() => setSelectedId(paper.id)}>{paper.title}</button><div className="authors">{paper.authors.length ? paper.authors.join(", ") : "No authors added"}</div>{connectionCount > 0 && <button className="connection-count" onClick={() => setSelectedId(paper.id)}>↗ {connectionCount} {connectionCount === 1 ? "connection" : "connections"}</button>}</td>
                 <td className="number-cell">{paper.year || "—"}</td><td className="number-cell" title={paper.citations.toLocaleString()}>{compactNumber(paper.citations)}</td>{!grouped && <td><span className="level-pill" style={{ color: levels[paper.understanding].color, borderColor: levels[paper.understanding].color }}>{paper.understanding} · {levels[paper.understanding].short}</span></td>}<td className="note-cell" onClick={() => setSelectedId(paper.id)}>{truncate(paper.mainQuestions)}</td><td className="note-cell" onClick={() => setSelectedId(paper.id)}>{truncate(paper.mainResults)}</td><td className="note-cell personal" onClick={() => setSelectedId(paper.id)}>{truncate(paper.myQuestions)}</td><td><span className="interest-score" style={{ color: interestColor(paper.interest) }}>{paper.interest}</span></td><td className="link-list">{paper.links.length ? paper.links.slice(0, 2).map((link, index) => <a href={link} target="_blank" rel="noreferrer" key={`${link}-${index}`}>{linkLabel(link)} ↗</a>) : "—"}</td>
               </tr>;
@@ -134,10 +187,16 @@ export default function Home() {
           <section className="drawer-section notes-section"><div className="section-heading"><h3>Reading notes</h3><span>Changes save automatically</span></div><label><span>Main questions</span><textarea value={selected.mainQuestions} onChange={(event) => updateSelected("mainQuestions", event.target.value)} placeholder="What is this paper trying to find out?" /></label><label><span>Main results</span><textarea value={selected.mainResults} onChange={(event) => updateSelected("mainResults", event.target.value)} placeholder="What did the authors find?" /></label><label><span>My questions</span><textarea className="personal-input" value={selected.myQuestions} onChange={(event) => updateSelected("myQuestions", event.target.value)} placeholder="What remains unclear or worth following up?" /></label></section>
           <section className="drawer-section"><div className="section-heading"><h3>Connections</h3><button className="text-button" onClick={openConnection}>＋ Add connection</button></div>
             {selectedConnections.length === 0 && <p className="subtle-empty">No manual connections yet. Link related work, dependencies, methods, or disagreements.</p>}
-            {(Object.keys(connectionLabels) as ConnectionType[]).map((type) => { const items = selectedConnections.filter((connection) => connection.type === type); if (!items.length) return null; return <div className="connection-group" key={type}><h4>{connectionLabels[type]} <span>{items.length}</span></h4>{items.map((connection) => { const otherId = connection.sourceId === selected.id ? connection.targetId : connection.sourceId; const other = library.papers.find((paper) => paper.id === otherId); const shared = commonAuthors(selected, other); const directional = type === "depends_on" ? (connection.sourceId === selected.id ? "This paper depends on" : "Depends on this paper") : null; return <article className="connection-card" key={connection.id}>{directional && <div className="relationship-direction">{directional}</div>}<button className="connected-title" onClick={() => setSelectedId(otherId)}>{other?.title ?? "Missing paper"} <span>→</span></button>{connection.topics.length > 0 && <div className="tags">{connection.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>}{connection.note && <p>{connection.note}</p>}{shared.length > 0 && <div className="shared-authors">Common {shared.length === 1 ? "author" : "authors"}: {shared.join(", ")}</div>}<button className="remove-connection" onClick={() => removeConnection(connection.id)} aria-label="Remove connection">Remove</button></article>; })}</div>; })}
+            {(Object.keys(connectionLabels) as ConnectionType[]).map((type) => { const items = selectedConnections.filter((connection) => connection.type === type); if (!items.length) return null; return <div className="connection-group" key={type}><h4>{connectionLabels[type]} <span>{items.length}</span></h4>{items.map((connection) => { const otherId = connection.sourceId === selected.id ? connection.targetId : connection.sourceId; const other = library.papers.find((paper) => paper.id === otherId); const shared = commonAuthors(selected, other); const directional = type === "depends_on" ? (connection.sourceId === selected.id ? "This paper depends on" : "Depends on this paper") : null; return <article className="connection-card" key={connection.id}>{directional && <div className="relationship-direction">{directional}</div>}<button className="connected-title" onClick={() => setSelectedId(otherId)}>{other?.title ?? "Missing paper"} <span>→</span></button>{connection.topics.length > 0 && <div className="tags">{connection.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>}{connection.note && <p>{connection.note}</p>}{shared.length > 0 && <div className="shared-authors">Common {shared.length === 1 ? "author" : "authors"}: {shared.join(", ")}</div>}<div className="connection-card-actions"><button onClick={() => openConnectionDetails(connection)}>Details</button><button onClick={() => editConnection(connection.id)}>Edit</button><button className="danger" onClick={() => removeConnection(connection.id)} aria-label="Remove connection">Remove</button></div></article>; })}</div>; })}
           </section>
           <section className="drawer-section"><div className="section-heading"><h3>Shared authors</h3><span>Found automatically</span></div>{automaticAuthorLinks.length === 0 ? <p className="subtle-empty">No authors shared with other papers in your library.</p> : automaticAuthorLinks.map(({ paper, authors }) => <button className="author-link" key={paper.id} onClick={() => setSelectedId(paper.id)}><span className="author-avatar">{authors[0].split(" ").map((part) => part[0]).slice(0, 2).join("")}</span><span><strong>{authors.join(", ")}</strong><small>{paper.title}</small></span><span>→</span></button>)}</section>
         </div>
+      </aside></>}
+
+      {selectedConnectionBundle && selectedConnectionSource && selectedConnectionTarget && <><button className="drawer-scrim" aria-label="Close connection details" onClick={() => setSelectedConnectionId(null)} /><aside className="detail-drawer connection-detail-drawer" aria-label={`Connections between ${selectedConnectionSource.title} and ${selectedConnectionTarget.title}`}>
+        <div className="drawer-topline" style={{ background: connectionColors[selectedConnectionBundle.connections[0].type] }} />
+        <div className="drawer-header connection-bundle-header"><div className="drawer-kicker"><span>{selectedConnectionBundle.connections.length} {selectedConnectionBundle.connections.length === 1 ? "connection" : "connections"}</span></div><button className="icon-button close" onClick={() => setSelectedConnectionId(null)} aria-label="Close">×</button><div className="connection-paper-pair"><button onClick={() => openPaperFromConnection(selectedConnectionSource.id)}>{selectedConnectionSource.title}</button><span>↔</span><button onClick={() => openPaperFromConnection(selectedConnectionTarget.id)}>{selectedConnectionTarget.title}</button></div></div>
+        <div className="drawer-body connection-bundle-list">{selectedConnectionBundle.connections.map((connection) => <section className="drawer-section connection-detail-item" style={{ borderLeftColor: connectionColors[connection.type] }} key={connection.id}><div className="section-heading"><h3 style={{ color: connectionColors[connection.type] }}>{visualConnectionLabels[connection.type]}</h3><span>{connection.automatic ? "Found automatically" : "Saved connection"}</span></div>{connection.type === "depends_on" && <div className="relationship-direction">{library.papers.find((paper) => paper.id === connection.sourceId)?.title} depends on {library.papers.find((paper) => paper.id === connection.targetId)?.title}</div>}{connection.note && <p className="connection-full-note">{connection.note}</p>}{connection.topics.length > 0 && <div className="tags connection-detail-tags">{connection.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>}{!connection.automatic && <div className="connection-detail-actions"><button className="text-button" onClick={() => editConnection(connection.id)}>Edit connection</button><button className="text-button danger" onClick={() => removeConnection(connection.id)}>Remove</button></div>}</section>)}</div>
       </aside></>}
 
       {paperModal && <div className="modal-layer" role="presentation"><button className="modal-scrim" aria-label="Close editor" onClick={() => setPaperModal(null)} /><form className="modal paper-modal" onSubmit={savePaper}>
@@ -147,10 +206,10 @@ export default function Home() {
         <div className="modal-footer"><button type="button" className="button quiet" onClick={() => setPaperModal(null)}>Cancel</button><button type="submit" className="button primary">{paperModal === "add" ? "Add to library" : "Save changes"}</button></div>
       </form></div>}
 
-      {connectionModal && selected && <div className="modal-layer" role="presentation"><button className="modal-scrim" aria-label="Close connection editor" onClick={() => setConnectionModal(false)} /><form className="modal connection-modal" onSubmit={saveConnection}>
-        <div className="modal-header"><div><div className="eyebrow">Link from “{truncate(selected.title, 42)}”</div><h2>Add a connection</h2></div><button type="button" className="icon-button" onClick={() => setConnectionModal(false)}>×</button></div>
-        <div className="form-stack"><label><span>Connected paper</span><select required value={connectionDraft.targetId} onChange={(event) => setConnectionDraft({ ...connectionDraft, targetId: event.target.value })}>{library.papers.filter((paper) => paper.id !== selected.id).map((paper) => <option value={paper.id} key={paper.id}>{paper.title}</option>)}</select></label>{targetPaper && commonAuthors(selected, targetPaper).length > 0 && <div className="auto-match"><span>Auto</span> Common {commonAuthors(selected, targetPaper).length === 1 ? "author" : "authors"}: <strong>{commonAuthors(selected, targetPaper).join(", ")}</strong></div>}<label><span>Relationship</span><select value={connectionDraft.type} onChange={(event) => setConnectionDraft({ ...connectionDraft, type: event.target.value as ConnectionType })}>{(Object.keys(connectionLabels) as ConnectionType[]).map((type) => <option value={type} key={type}>{connectionLabels[type]}</option>)}</select></label><label><span>Common topics <small>comma-separated</small></span><input value={connectionDraft.topics} onChange={(event) => setConnectionDraft({ ...connectionDraft, topics: event.target.value })} placeholder="e.g. causal inference, panel data" /></label><label><span>How are they connected?</span><textarea value={connectionDraft.note} onChange={(event) => setConnectionDraft({ ...connectionDraft, note: event.target.value })} placeholder="Capture the dependency, disagreement, shared method, or idea…" /></label>{connectionDraft.type === "depends_on" && <p className="direction-note">This records that <strong>{selected.title}</strong> depends on <strong>{targetPaper?.title}</strong>.</p>}</div>
-        <div className="modal-footer"><button type="button" className="button quiet" onClick={() => setConnectionModal(false)}>Cancel</button><button type="submit" className="button primary" disabled={!connectionDraft.targetId}>Add connection</button></div>
+      {connectionModal && connectionSourcePaper && <div className="modal-layer" role="presentation"><button className="modal-scrim" aria-label="Close connection editor" onClick={closeConnectionEditor} /><form className="modal connection-modal" onSubmit={saveConnection}>
+        <div className="modal-header"><div><div className="eyebrow">Link from “{truncate(connectionSourcePaper.title, 42)}”</div><h2>{connectionModal === "edit" ? "Edit connection" : "Add a connection"}</h2></div><button type="button" className="icon-button" onClick={closeConnectionEditor}>×</button></div>
+        <div className="form-stack"><label><span>Connected paper</span><select required disabled={connectionModal === "edit"} value={connectionDraft.targetId} onChange={(event) => setConnectionDraft({ ...connectionDraft, targetId: event.target.value })}>{library.papers.filter((paper) => paper.id !== connectionSourcePaper.id).map((paper) => <option value={paper.id} key={paper.id}>{paper.title}</option>)}</select></label>{targetPaper && commonAuthors(connectionSourcePaper, targetPaper).length > 0 && <div className="auto-match"><span>Auto</span> Common {commonAuthors(connectionSourcePaper, targetPaper).length === 1 ? "author" : "authors"}: <strong>{commonAuthors(connectionSourcePaper, targetPaper).join(", ")}</strong></div>}<label><span>Relationship</span><select value={connectionDraft.type} onChange={(event) => setConnectionDraft({ ...connectionDraft, type: event.target.value as ConnectionType })}>{(Object.keys(connectionLabels) as ConnectionType[]).map((type) => <option value={type} key={type}>{connectionLabels[type]}</option>)}</select></label><label><span>Common topics <small>comma-separated</small></span><input value={connectionDraft.topics} onChange={(event) => setConnectionDraft({ ...connectionDraft, topics: event.target.value })} placeholder="e.g. causal inference, panel data" /></label><label><span>How are they connected?</span><textarea value={connectionDraft.note} onChange={(event) => setConnectionDraft({ ...connectionDraft, note: event.target.value })} placeholder="Capture the dependency, disagreement, shared method, or idea…" /></label>{connectionDraft.type === "depends_on" && <p className="direction-note">This records that <strong>{connectionSourcePaper.title}</strong> depends on <strong>{targetPaper?.title}</strong>.</p>}</div>
+        <div className="modal-footer"><button type="button" className="button quiet" onClick={closeConnectionEditor}>Cancel</button><button type="submit" className="button primary" disabled={!connectionDraft.targetId}>{connectionModal === "edit" ? "Save changes" : "Add connection"}</button></div>
       </form></div>}
     </main>
   );
@@ -158,4 +217,87 @@ export default function Home() {
 
 function SortButton({ label, column, current, direction, onSort }: { label: string; column: SortKey; current: SortKey; direction: "asc" | "desc"; onSort: (column: SortKey) => void }) {
   return <button className={`sort-button ${current === column ? "active" : ""}`} onClick={() => onSort(column)}>{label}<span>{current === column ? (direction === "asc" ? "↑" : "↓") : "↕"}</span></button>;
+}
+
+type RailLine = { d: string; color: string; y1: number; y2: number };
+type RailPath = { id: string; hitD: string; label: string; lines: RailLine[] };
+
+function ConnectionRail({ rootRef, bundles, layoutKey, selectedId, onSelect }: { rootRef: React.RefObject<HTMLElement | null>; bundles: ConnectionBundle[]; layoutKey: string; selectedId: string | null; onSelect: (id: string) => void }) {
+  const [paths, setPaths] = useState<RailPath[]>([]);
+  const [height, setHeight] = useState(0);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    let frame = 0;
+    const measure = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const rootRect = root.getBoundingClientRect();
+        const visible = bundles.map((bundle) => {
+          const source = root.querySelector<HTMLElement>(`[data-paper-id="${CSS.escape(bundle.sourceId)}"]`);
+          const target = root.querySelector<HTMLElement>(`[data-paper-id="${CSS.escape(bundle.targetId)}"]`);
+          return source && target ? { bundle, source, target } : null;
+        }).filter((item): item is { bundle: ConnectionBundle; source: HTMLElement; target: HTMLElement } => Boolean(item));
+
+        const attachmentCounts = new Map<string, number>();
+        visible.forEach(({ bundle }) => {
+          attachmentCounts.set(bundle.sourceId, (attachmentCounts.get(bundle.sourceId) ?? 0) + 1);
+          attachmentCounts.set(bundle.targetId, (attachmentCounts.get(bundle.targetId) ?? 0) + 1);
+        });
+        const attachmentIndexes = new Map<string, number>();
+        const intervals = visible.sort((a, b) => a.bundle.id.localeCompare(b.bundle.id)).map(({ bundle, source, target }) => {
+          const endpointY = (paperId: string, element: HTMLElement) => {
+            const index = attachmentIndexes.get(paperId) ?? 0;
+            attachmentIndexes.set(paperId, index + 1);
+            const count = attachmentCounts.get(paperId) ?? 1;
+            return element.getBoundingClientRect().top - rootRect.top + element.getBoundingClientRect().height / 2 + (index - (count - 1) / 2) * 4;
+          };
+          const y1 = endpointY(bundle.sourceId, source);
+          const y2 = endpointY(bundle.targetId, target);
+          return { bundle, y1, y2, top: Math.min(y1, y2), bottom: Math.max(y1, y2) };
+        }).sort((a, b) => a.top - b.top || b.bottom - a.bottom || a.bundle.id.localeCompare(b.bundle.id));
+
+        const laneEnds: number[] = [];
+        const routed = intervals.map(({ bundle, y1, y2, top, bottom }) => {
+          let lane = laneEnds.findIndex((end) => top > end + 6);
+          if (lane < 0) lane = laneEnds.length;
+          laneEnds[lane] = bottom;
+          return { bundle, y1, y2, lane };
+        });
+        const laneSpacing = laneEnds.length > 1 ? 42 / (laneEnds.length - 1) : 0;
+        const nextPaths = routed.map(({ bundle, y1, y2, lane }) => {
+          const laneX = 49 - lane * laneSpacing;
+          const endpointX = 59;
+          const lines = bundle.connections.map((connection, index) => {
+            const offset = (index - (bundle.connections.length - 1) / 2) * 3;
+            const direction = y1 <= y2 ? 1 : -1;
+            const sourceOffset = offset * direction;
+            const targetOffset = -offset * direction;
+            return { d: `M ${endpointX} ${y1 + sourceOffset} H ${laneX + offset} V ${y2 + targetOffset} H ${endpointX}`, color: connectionColors[connection.type], y1: y1 + sourceOffset, y2: y2 + targetOffset };
+          });
+          return { id: bundle.id, hitD: `M ${endpointX} ${y1} H ${laneX} V ${y2} H ${endpointX}`, label: `${bundle.connections.length} ${bundle.connections.length === 1 ? "connection" : "connections"} between papers`, lines };
+        });
+        setHeight(root.scrollHeight);
+        setPaths(nextPaths);
+      });
+    };
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    root.querySelectorAll<HTMLElement>("[data-paper-id]").forEach((row) => observer.observe(row));
+    window.addEventListener("resize", measure);
+    measure();
+    return () => { window.cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener("resize", measure); };
+  }, [rootRef, bundles, layoutKey]);
+
+  if (!paths.length) return null;
+  return <svg className="connection-rail" width="64" height={height} viewBox={`0 0 64 ${height}`} role="img" aria-label="Connections between visible papers">
+    <title>Connections between visible papers</title>
+    <desc>Orthogonal colored lines connect related paper rows. Select a line to read its full description.</desc>
+    {paths.map((path) => <g key={path.id} className={selectedId === path.id ? "selected" : ""}>
+      {path.lines.map((line, index) => <g key={`${path.id}:${index}`}><path className="connection-path" d={line.d} fill="none" stroke={line.color} strokeWidth={selectedId === path.id ? 2 : 1.25} vectorEffect="non-scaling-stroke" /><rect x="57" y={line.y1 - 1} width="3" height="2" fill={line.color} /><rect x="57" y={line.y2 - 1} width="3" height="2" fill={line.color} /></g>)}
+      <path className="connection-hit-path" d={path.hitD} fill="none" stroke="transparent" strokeWidth={Math.max(10, path.lines.length * 3 + 6)} vectorEffect="non-scaling-stroke" role="button" tabIndex={0} aria-label={`${path.label}; open details`} onClick={() => onSelect(path.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(path.id); } }} />
+    </g>)}
+  </svg>;
 }

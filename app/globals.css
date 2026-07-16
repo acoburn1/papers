@@ -47,12 +47,21 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); background: #eef2f6; colo
 .group-toggle input { width: auto; margin: 0; }
 .group-toggle > span { display: none; }
 
-.ledger { width: 100%; }
+.connection-key { display: flex; justify-content: flex-start; flex-wrap: wrap; gap: 5px 13px; margin: -2px 0 8px; color: var(--muted); font-size: 10px; }
+.connection-key span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.connection-key i { width: 14px; height: 2px; display: inline-block; }
+.ledger { position: relative; width: 100%; padding-left: 64px; }
+.connection-rail { position: absolute; z-index: 3; top: 0; left: 0; overflow: visible; pointer-events: auto; }
+.connection-path { opacity: .82; pointer-events: none; }
+.connection-rail g.selected .connection-path { opacity: 1; }
+.connection-hit-path { pointer-events: stroke; cursor: pointer; }
+.connection-hit-path:focus { outline: none; }
+.connection-rail g:has(.connection-hit-path:focus-visible) .connection-path { stroke-width: 2.5; opacity: 1; }
 .loading-line, .empty-state { padding: 10px; border: 1px dashed var(--line); background: var(--surface); color: var(--muted); }
 .empty-state > span { display: none; }
 .empty-state h2 { margin: 0 0 4px; font-size: 14px; }
 .empty-state p { margin: 0; }
-.paper-group { margin: 0 0 12px; border: 1px solid var(--line); border-left: 3px solid var(--level-color); border-radius: 3px; overflow: hidden; background: var(--surface); }
+.paper-group { position: relative; z-index: 1; margin: 0 0 12px; border: 1px solid var(--line); border-left: 3px solid var(--level-color); border-radius: 3px; overflow: hidden; background: var(--surface); }
 .group-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 38px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: #f8f9fb; }
 .group-header > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .level-number { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 3px; background: var(--level-color); color: white; font: 700 11px "Cascadia Mono", Consolas, monospace; }
@@ -118,7 +127,7 @@ textarea, input, select { border: 1px solid var(--line); border-radius: 3px; bac
 .connection-group { margin-top: 13px; }
 .connection-group h4 { margin: 0 0 5px; color: var(--muted); font-size: 11px; }
 .connection-group h4 span { font-weight: 400; }
-.connection-card { position: relative; padding: 9px 65px 9px 9px; border: 1px solid var(--line); border-left: 2px solid var(--accent); background: var(--surface); }
+.connection-card { position: relative; padding: 9px; border: 1px solid var(--line); border-left: 2px solid var(--accent); background: var(--surface); }
 .connection-card + .connection-card { margin-top: 6px; }
 .relationship-direction { margin-bottom: 4px; color: #8a4b08; font-size: 11px; }
 .connected-title { padding: 0; border: 0; background: transparent; font-weight: 700; text-align: left; cursor: pointer; }
@@ -126,12 +135,25 @@ textarea, input, select { border: 1px solid var(--line); border-radius: 3px; bac
 .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
 .tags span { padding: 2px 5px; border: 1px solid #b2ccff; border-radius: 3px; background: #eff6ff; color: var(--accent-dark); font-size: 10px; }
 .shared-authors { margin-top: 6px; color: #594a72; font-size: 11px; }
-.remove-connection { position: absolute; top: 9px; right: 9px; font-size: 10px; }
+.connection-card-actions, .connection-detail-actions { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
+.connection-card-actions button { padding: 0; border: 0; background: transparent; color: var(--accent-dark); font-size: 10px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.connection-card-actions button.danger { color: var(--error); margin-left: auto; }
 .author-link { width: 100%; display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 8px; padding: 7px 4px; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
 .author-link:hover { background: #eef2f6; }
 .author-avatar { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 3px; background: #eff6ff; color: var(--accent-dark); font: 700 10px "Cascadia Mono", Consolas, monospace; }
 .author-link strong { display: block; font-size: 11px; }
 .author-link small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+.connection-paper-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 11px; }
+.connection-paper-pair button { padding: 7px; border: 1px solid var(--line); border-radius: 3px; background: #f8f9fb; color: var(--ink); font-weight: 600; text-align: left; cursor: pointer; }
+.connection-paper-pair button:hover { border-color: var(--accent); background: #eff6ff; }
+.connection-paper-pair > span { color: var(--muted); font-size: 11px; text-align: center; }
+.connection-full-note { margin: 0; color: #344054; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.connection-detail-tags { margin-top: 0; }
+.connection-bundle-header .drawer-kicker { margin-bottom: 4px; }
+.connection-bundle-header .connection-paper-pair { margin-top: 0; }
+.connection-bundle-list .connection-detail-item { border-left-width: 3px; }
+.connection-detail-actions { padding-top: 9px; border-top: 1px solid var(--line); }
+.connection-detail-actions .danger { margin-left: auto; }
 
 .modal-layer { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 16px; }
 .modal-scrim { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #17203338; }
@@ -167,6 +189,8 @@ label small { color: var(--muted); font-size: 10px; }
   .search-box { grid-template-columns: auto 1fr auto; }
   .group-toggle { margin: 0; }
   .group-description { display: none; }
+  .connection-key { justify-content: flex-start; }
+  .connection-paper-pair { grid-template-columns: 1fr; }
   .detail-drawer { width: 100%; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid label.wide { grid-column: auto; }
