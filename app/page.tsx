@@ -7,7 +7,7 @@ type SortKey = "title" | "year" | "citations" | "priority" | "interest" | "under
 type ConnectionType = "shared_topic" | "depends_on" | "supports" | "contrasts" | "method" | "related";
 type Paper = { id: string; title: string; year: number; citations: number; priority: number; authors: string[]; links: string[]; mainQuestions: string; mainResults: string; myQuestions: string; understanding: Understanding; interest: number; createdAt: string; updatedAt: string };
 type Connection = { id: string; sourceId: string; targetId: string; type: ConnectionType; topics: string[]; note: string };
-type LibraryState = { papers: Paper[]; connections: Connection[] };
+type LibraryState = { papers: Paper[]; connections: Connection[]; mutedCommonAuthors: string[] };
 type VisualConnectionType = ConnectionType | "common_authors";
 type VisualConnection = Omit<Connection, "type"> & { type: VisualConnectionType; automatic?: boolean };
 type ConnectionBundle = { id: string; sourceId: string; targetId: string; connections: VisualConnection[] };
@@ -31,6 +31,7 @@ const seedState: LibraryState = {
     { id: "paper-bert", title: "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", year: 2018, citations: 129815, authors: ["Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova"], links: ["https://arxiv.org/abs/1810.04805"], mainQuestions: "How useful is deep bidirectional pretraining for language understanding?", mainResults: "Masked-language-model pretraining produces state-of-the-art results across a broad NLP benchmark suite.", myQuestions: "Revisit the ablation study after reading more recent masking objectives.", understanding: 0, interest: 69, createdAt: "2026-07-15T12:00:00.000Z", updatedAt: "2026-07-15T12:00:00.000Z" },
   ] as Array<Omit<Paper, "priority">>).map((paper, index) => ({ ...paper, priority: [5, 4, 4, 3][index] })),
   connections: [{ id: "connection-attention-vit", sourceId: "paper-vit", targetId: "paper-attention", type: "depends_on", topics: ["self-attention", "transformer architecture"], note: "ViT transfers the Transformer architecture from token sequences to fixed-size image patches." }],
+  mutedCommonAuthors: [],
 };
 
 const emptyPaper = (): Omit<Paper, "id" | "createdAt" | "updatedAt"> => ({ title: "", year: new Date().getFullYear(), citations: 0, priority: 3, authors: [], links: [], mainQuestions: "", mainResults: "", myQuestions: "", understanding: 0, interest: 50 });
@@ -38,7 +39,7 @@ const newId = (prefix: string) => `${prefix}-${typeof crypto !== "undefined" && 
 function openLibraryDb(): Promise<IDBDatabase> { return new Promise((resolve, reject) => { const request = indexedDB.open("paper-ledger", 1); request.onupgradeneeded = () => { if (!request.result.objectStoreNames.contains("library")) request.result.createObjectStore("library"); }; request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
 async function readLibrary(): Promise<LibraryState | undefined> { const db = await openLibraryDb(); return new Promise((resolve, reject) => { const request = db.transaction("library", "readonly").objectStore("library").get("state"); request.onsuccess = () => resolve(request.result as LibraryState | undefined); request.onerror = () => reject(request.error); }); }
 async function writeLibrary(state: LibraryState) { const db = await openLibraryDb(); return new Promise<void>((resolve, reject) => { const tx = db.transaction("library", "readwrite"); tx.objectStore("library").put(state, "state"); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); }); }
-function normalizeLibrary(state: LibraryState): LibraryState { return { ...state, papers: state.papers.map((paper) => ({ ...paper, priority: Math.min(5, Math.max(1, Math.round(Number(paper.priority) || 3))) })) }; }
+function normalizeLibrary(state: LibraryState): LibraryState { return { ...state, papers: state.papers.map((paper) => ({ ...paper, priority: Math.min(5, Math.max(1, Math.round(Number(paper.priority) || 3))) })), mutedCommonAuthors: Array.isArray(state.mutedCommonAuthors) ? [...new Set(state.mutedCommonAuthors.map(normalizeAuthor).filter(Boolean))] : [] }; }
 const normalizeAuthor = (author: string) => author.trim().toLocaleLowerCase();
 function commonAuthors(a?: Paper, b?: Paper) { if (!a || !b) return []; const right = new Set(b.authors.map(normalizeAuthor)); return a.authors.filter((author) => right.has(normalizeAuthor(author))); }
 const interestColor = (value: number) => `hsl(${Math.round(value * 1.18)}, 56%, 37%)`;
@@ -61,6 +62,7 @@ export default function Home() {
   const [connectionModal, setConnectionModal] = useState<"add" | "edit" | null>(null);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [authorLinesModal, setAuthorLinesModal] = useState(false);
   const [paperDraft, setPaperDraft] = useState(emptyPaper());
   const [authorDraft, setAuthorDraft] = useState("");
   const [linkDraft, setLinkDraft] = useState("");
@@ -73,11 +75,11 @@ export default function Home() {
   useEffect(() => { if (!ready) return; setSaveState("saving"); const timer = window.setTimeout(() => { writeLibrary(library).then(() => setSaveState("saved")).catch(() => setSaveState("error")); }, 180); return () => window.clearTimeout(timer); }, [library, ready]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { if (connectionModal) setConnectionModal(null); else if (paperModal) setPaperModal(null); else if (selectedConnectionId) setSelectedConnectionId(null); else setSelectedId(null); }
-      if (event.key === "/" && !paperModal && !connectionModal && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") { event.preventDefault(); searchRef.current?.focus(); }
+      if (event.key === "Escape") { if (authorLinesModal) setAuthorLinesModal(false); else if (connectionModal) setConnectionModal(null); else if (paperModal) setPaperModal(null); else if (selectedConnectionId) setSelectedConnectionId(null); else setSelectedId(null); }
+      if (event.key === "/" && !paperModal && !connectionModal && !authorLinesModal && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") { event.preventDefault(); searchRef.current?.focus(); }
     };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
-  }, [paperModal, connectionModal]);
+  }, [paperModal, connectionModal, authorLinesModal, selectedConnectionId]);
 
   const selected = library.papers.find((paper) => paper.id === selectedId);
   const filtered = useMemo(() => { const term = query.trim().toLocaleLowerCase(); if (!term) return library.papers; return library.papers.filter((paper) => [paper.title, paper.authors.join(" "), paper.mainQuestions, paper.mainResults, paper.myQuestions].join(" ").toLocaleLowerCase().includes(term)); }, [library.papers, query]);
@@ -85,6 +87,22 @@ export default function Home() {
   const displayedGroups = useMemo(() => { if (!grouped) return [{ level: null as Understanding | null, papers: sorted }]; const order: Understanding[] = sortKey === "understanding" && sortDirection === "asc" ? [0, 1, 2, 3] : [3, 2, 1, 0]; return order.map((level) => ({ level, papers: sorted.filter((paper) => paper.understanding === level) })); }, [grouped, sorted, sortKey, sortDirection]);
   const selectedConnections = useMemo(() => selected ? library.connections.filter((item) => item.sourceId === selected.id || item.targetId === selected.id) : [], [selected, library.connections]);
   const automaticAuthorLinks = useMemo(() => selected ? library.papers.filter((paper) => paper.id !== selected.id).map((paper) => ({ paper, authors: commonAuthors(selected, paper) })).filter((item) => item.authors.length > 0) : [], [selected, library.papers]);
+  const mutedCommonAuthorSet = useMemo(() => new Set(library.mutedCommonAuthors.map(normalizeAuthor)), [library.mutedCommonAuthors]);
+  const commonAuthorStats = useMemo(() => {
+    const authors = new Map<string, { name: string; paperIds: Set<string> }>();
+    library.papers.forEach((paper) => {
+      const seen = new Set<string>();
+      paper.authors.forEach((name) => {
+        const key = normalizeAuthor(name);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        const existing = authors.get(key);
+        if (existing) existing.paperIds.add(paper.id);
+        else authors.set(key, { name, paperIds: new Set([paper.id]) });
+      });
+    });
+    return [...authors.entries()].filter(([, author]) => author.paperIds.size > 1).map(([key, author]) => ({ key, name: author.name, count: author.paperIds.size })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  }, [library.papers]);
   const visualConnections = useMemo<VisualConnection[]>(() => {
     const automatic: VisualConnection[] = [];
     for (let left = 0; left < library.papers.length; left += 1) {
@@ -106,6 +124,7 @@ export default function Home() {
     });
     return [...bundles.values()].map((bundle) => ({ ...bundle, connections: [...bundle.connections].sort((a, b) => connectionTypeOrder.indexOf(a.type) - connectionTypeOrder.indexOf(b.type) || a.id.localeCompare(b.id)) }));
   }, [visualConnections]);
+  const lineConnectionBundles = useMemo(() => connectionBundles.filter((bundle) => bundle.connections.some((connection) => connection.type !== "common_authors" || connection.topics.some((author) => !mutedCommonAuthorSet.has(normalizeAuthor(author))))), [connectionBundles, mutedCommonAuthorSet]);
   const selectedConnectionBundle = connectionBundles.find((bundle) => bundle.id === selectedConnectionId);
   const selectedConnectionSource = library.papers.find((paper) => paper.id === selectedConnectionBundle?.sourceId);
   const selectedConnectionTarget = library.papers.find((paper) => paper.id === selectedConnectionBundle?.targetId);
@@ -118,6 +137,7 @@ export default function Home() {
   function openVisualConnection(id: string) { setSelectedId(null); setSelectedConnectionId(id); }
   function openPaperFromConnection(id: string) { setSelectedConnectionId(null); setSelectedId(id); }
   function openConnectionDetails(connection: Connection) { const [sourceId, targetId] = [connection.sourceId, connection.targetId].sort(); setSelectedId(null); setSelectedConnectionId(`bundle:${sourceId}:${targetId}`); }
+  function toggleCommonAuthorLine(author: string) { const key = normalizeAuthor(author); setLibrary((current) => ({ ...current, mutedCommonAuthors: current.mutedCommonAuthors.includes(key) ? current.mutedCommonAuthors.filter((item) => item !== key) : [...current.mutedCommonAuthors, key] })); }
 
   function changeSort(next: SortKey) { if (sortKey === next) setSortDirection((current) => current === "asc" ? "desc" : "asc"); else { setSortKey(next); setSortDirection(next === "title" ? "asc" : "desc"); } }
   function openAdd() { setPaperDraft(emptyPaper()); setAuthorDraft(""); setLinkDraft(""); setPaperModal("add"); }
@@ -157,9 +177,9 @@ export default function Home() {
         <div className="sort-control"><span className="control-label">Sort</span><select value={sortKey} onChange={(event) => changeSort(event.target.value as SortKey)} aria-label="Sort papers"><option value="priority">Priority</option><option value="interest">Interest</option><option value="understanding">Understanding</option><option value="citations">Citations</option><option value="year">Year</option><option value="title">Title</option></select><button className="direction-button" onClick={() => setSortDirection((value) => value === "asc" ? "desc" : "asc")} aria-label={`Sort ${sortDirection === "asc" ? "descending" : "ascending"}`}>{sortDirection === "asc" ? "↑" : "↓"}</button></div>
         <label className="group-toggle"><input type="checkbox" checked={grouped} onChange={(event) => setGrouped(event.target.checked)} /><span aria-hidden="true" />Group by understanding</label>
       </section>
-      <div className="connection-key" aria-label="Connection color key">{(["common_authors", "supports", "depends_on", "shared_topic", "contrasts", "method"] as VisualConnectionType[]).map((type) => <span key={type}><i style={{ background: connectionColors[type] }} />{visualConnectionLabels[type]}</span>)}</div>
+      <div className="connection-key" aria-label="Connection color key">{(["common_authors", "supports", "depends_on", "shared_topic", "contrasts", "method"] as VisualConnectionType[]).map((type) => <span key={type}><i style={{ background: connectionColors[type] }} />{visualConnectionLabels[type]}</span>)}<button className="author-lines-button" onClick={() => setAuthorLinesModal(true)} disabled={commonAuthorStats.length === 0}>Author lines{library.mutedCommonAuthors.length > 0 ? ` (${library.mutedCommonAuthors.length} off)` : ""}</button></div>
       <section className="ledger" ref={ledgerRef} aria-live="polite">
-        <ConnectionRail rootRef={ledgerRef} bundles={connectionBundles} layoutKey={`${ready}:${grouped}:${sortKey}:${sortDirection}:${query}:${sorted.map((paper) => paper.id).join(",")}`} selectedId={selectedConnectionId} onSelect={openVisualConnection} />
+        <ConnectionRail rootRef={ledgerRef} bundles={lineConnectionBundles} layoutKey={`${ready}:${grouped}:${sortKey}:${sortDirection}:${query}:${library.mutedCommonAuthors.join(",")}:${sorted.map((paper) => paper.id).join(",")}`} selectedId={selectedConnectionId} onSelect={openVisualConnection} />
         {!ready && <div className="loading-line">Opening your local library…</div>}
         {ready && displayedGroups.map((group) => {
           const level = group.level === null ? null : levels[group.level]; if (grouped && group.papers.length === 0) return null;
@@ -178,7 +198,7 @@ export default function Home() {
         })}
         {ready && filtered.length === 0 && <div className="empty-state"><span>⌕</span><h2>No matching papers</h2><p>Try a different title, author, or phrase from your notes.</p></div>}
       </section>
-      <footer className="footer-note"><span>Data stays in this browser on this computer.</span><button onClick={() => { if (window.confirm("Clear every paper and connection? Export a backup first if needed.")) { setLibrary({ papers: [], connections: [] }); setSelectedId(null); } }}>Clear library</button></footer>
+      <footer className="footer-note"><span>Data stays in this browser on this computer.</span><button onClick={() => { if (window.confirm("Clear every paper and connection? Export a backup first if needed.")) { setLibrary({ papers: [], connections: [], mutedCommonAuthors: [] }); setSelectedId(null); } }}>Clear library</button></footer>
 
       {selected && <><button className="drawer-scrim" aria-label="Close paper details" onClick={() => setSelectedId(null)} /><aside className="detail-drawer" aria-label={`Details for ${selected.title}`}>
         <div className="drawer-topline" style={{ background: levels[selected.understanding].color }} />
@@ -196,8 +216,15 @@ export default function Home() {
       {selectedConnectionBundle && selectedConnectionSource && selectedConnectionTarget && <><button className="drawer-scrim" aria-label="Close connection details" onClick={() => setSelectedConnectionId(null)} /><aside className="detail-drawer connection-detail-drawer" aria-label={`Connections between ${selectedConnectionSource.title} and ${selectedConnectionTarget.title}`}>
         <div className="drawer-topline" style={{ background: connectionColors[selectedConnectionBundle.connections[0].type] }} />
         <div className="drawer-header connection-bundle-header"><div className="drawer-kicker"><span>{selectedConnectionBundle.connections.length} {selectedConnectionBundle.connections.length === 1 ? "connection" : "connections"}</span></div><button className="icon-button close" onClick={() => setSelectedConnectionId(null)} aria-label="Close">×</button><div className="connection-paper-pair"><button onClick={() => openPaperFromConnection(selectedConnectionSource.id)}>{selectedConnectionSource.title}</button><span>↔</span><button onClick={() => openPaperFromConnection(selectedConnectionTarget.id)}>{selectedConnectionTarget.title}</button></div></div>
-        <div className="drawer-body connection-bundle-list">{selectedConnectionBundle.connections.map((connection) => <section className="drawer-section connection-detail-item" style={{ borderLeftColor: connectionColors[connection.type] }} key={connection.id}><div className="section-heading"><h3 style={{ color: connectionColors[connection.type] }}>{visualConnectionLabels[connection.type]}</h3><span>{connection.automatic ? "Found automatically" : "Saved connection"}</span></div>{connection.type === "depends_on" && <div className="relationship-direction">{library.papers.find((paper) => paper.id === connection.sourceId)?.title} depends on {library.papers.find((paper) => paper.id === connection.targetId)?.title}</div>}{connection.note && <p className="connection-full-note">{connection.note}</p>}{connection.topics.length > 0 && <div className="tags connection-detail-tags">{connection.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>}{!connection.automatic && <div className="connection-detail-actions"><button className="text-button" onClick={() => editConnection(connection.id)}>Edit connection</button><button className="text-button danger" onClick={() => removeConnection(connection.id)}>Remove</button></div>}</section>)}</div>
+        <div className="drawer-body connection-bundle-list">{selectedConnectionBundle.connections.map((connection) => <section className="drawer-section connection-detail-item" style={{ borderLeftColor: connectionColors[connection.type] }} key={connection.id}><div className="section-heading"><h3 style={{ color: connectionColors[connection.type] }}>{visualConnectionLabels[connection.type]}</h3><span>{connection.automatic ? "Found automatically" : "Saved connection"}</span></div>{connection.type === "depends_on" && <div className="relationship-direction">{library.papers.find((paper) => paper.id === connection.sourceId)?.title} depends on {library.papers.find((paper) => paper.id === connection.targetId)?.title}</div>}{connection.note && <p className="connection-full-note">{connection.note}</p>}{connection.topics.length > 0 && <div className="tags connection-detail-tags">{connection.topics.map((topic) => <span className={connection.type === "common_authors" && mutedCommonAuthorSet.has(normalizeAuthor(topic)) ? "line-muted-author" : ""} key={topic}>{topic}</span>)}</div>}{!connection.automatic && <div className="connection-detail-actions"><button className="text-button" onClick={() => editConnection(connection.id)}>Edit connection</button><button className="text-button danger" onClick={() => removeConnection(connection.id)}>Remove</button></div>}</section>)}</div>
       </aside></>}
+
+      {authorLinesModal && <div className="modal-layer" role="presentation"><button className="modal-scrim" aria-label="Close common author line settings" onClick={() => setAuthorLinesModal(false)} /><section className="modal author-lines-modal" role="dialog" aria-modal="true" aria-labelledby="author-lines-heading">
+        <div className="modal-header"><div><div className="eyebrow">Global setting</div><h2 id="author-lines-heading">Common author lines</h2></div><button type="button" className="icon-button" onClick={() => setAuthorLinesModal(false)}>×</button></div>
+        <p className="author-lines-help">Turn off authors who should remain listed in connection details but should not create lines by themselves.</p>
+        <div className="author-lines-list">{commonAuthorStats.map((author) => { const createsLines = !mutedCommonAuthorSet.has(author.key); return <label className="author-line-row" key={author.key}><input type="checkbox" checked={createsLines} onChange={() => toggleCommonAuthorLine(author.key)} /><span><strong>{author.name}</strong><small>{author.count} papers</small></span><em>{createsLines ? "Creates lines" : "Details only"}</em></label>; })}</div>
+        <div className="modal-footer"><button type="button" className="button primary" onClick={() => setAuthorLinesModal(false)}>Done</button></div>
+      </section></div>}
 
       {paperModal && <div className="modal-layer" role="presentation"><button className="modal-scrim" aria-label="Close editor" onClick={() => setPaperModal(null)} /><form className="modal paper-modal" onSubmit={savePaper}>
         <div className="modal-header"><div><div className="eyebrow">{paperModal === "add" ? "New library entry" : "Library entry"}</div><h2>{paperModal === "add" ? "Add a paper" : "Edit paper"}</h2></div><button type="button" className="icon-button" onClick={() => setPaperModal(null)}>×</button></div>

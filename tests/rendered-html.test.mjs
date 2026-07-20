@@ -23,6 +23,10 @@ test("includes local persistence and relationship features", async () => {
   assert.match(page, /Edit connection/);
   assert.match(page, /targetOffset = -offset \* direction/);
   assert.match(styles, /\.connection-rail \{[^}]*pointer-events: auto/);
+  assert.match(page, /mutedCommonAuthors/);
+  assert.match(page, /lineConnectionBundles/);
+  assert.match(page, /Common author lines/);
+  assert.match(page, /Details only/);
   assert.doesNotMatch(page, /Open first paper/);
   assert.match(layout, /title: "papers"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
