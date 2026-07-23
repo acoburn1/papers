@@ -63,6 +63,7 @@ export default function Home() {
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [authorLinesModal, setAuthorLinesModal] = useState(false);
+  const [expandedNoteCells, setExpandedNoteCells] = useState<Set<string>>(() => new Set());
   const [paperDraft, setPaperDraft] = useState(emptyPaper());
   const [authorDraft, setAuthorDraft] = useState("");
   const [linkDraft, setLinkDraft] = useState("");
@@ -138,6 +139,7 @@ export default function Home() {
   function openPaperFromConnection(id: string) { setSelectedConnectionId(null); setSelectedId(id); }
   function openConnectionDetails(connection: Connection) { const [sourceId, targetId] = [connection.sourceId, connection.targetId].sort(); setSelectedId(null); setSelectedConnectionId(`bundle:${sourceId}:${targetId}`); }
   function toggleCommonAuthorLine(author: string) { const key = normalizeAuthor(author); setLibrary((current) => ({ ...current, mutedCommonAuthors: current.mutedCommonAuthors.includes(key) ? current.mutedCommonAuthors.filter((item) => item !== key) : [...current.mutedCommonAuthors, key] })); }
+  function toggleNoteCell(key: string) { setExpandedNoteCells((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; }); }
 
   function changeSort(next: SortKey) { if (sortKey === next) setSortDirection((current) => current === "asc" ? "desc" : "asc"); else { setSortKey(next); setSortDirection(next === "title" ? "asc" : "desc"); } }
   function openAdd() { setPaperDraft(emptyPaper()); setAuthorDraft(""); setLinkDraft(""); setPaperModal("add"); }
@@ -189,9 +191,12 @@ export default function Home() {
               <th><SortButton label="Title & authors" column="title" current={sortKey} direction={sortDirection} onSort={changeSort} /></th><th><SortButton label="Year" column="year" current={sortKey} direction={sortDirection} onSort={changeSort} /></th><th><SortButton label="Citations" column="citations" current={sortKey} direction={sortDirection} onSort={changeSort} /></th>{!grouped && <th><SortButton label="Level" column="understanding" current={sortKey} direction={sortDirection} onSort={changeSort} /></th>}<th>Main question</th><th>Main result</th><th>My questions</th><th><SortButton label="Interest" column="interest" current={sortKey} direction={sortDirection} onSort={changeSort} /></th><th>Links</th>
             </tr></thead><tbody>{group.papers.map((paper) => {
               const connectionCount = library.connections.filter((item) => item.sourceId === paper.id || item.targetId === paper.id).length;
+              const mainQuestionsKey = `${paper.id}:mainQuestions`;
+              const mainResultsKey = `${paper.id}:mainResults`;
+              const myQuestionsKey = `${paper.id}:myQuestions`;
               return <tr key={paper.id} data-paper-id={paper.id} className={selectedId === paper.id ? "selected-row" : ""}>
                 <td className="paper-identity"><button className="paper-title" style={{ opacity: priorityOpacity(paper.priority) }} onClick={() => setSelectedId(paper.id)}>{paper.title}</button><div className="authors">{paper.authors.length ? paper.authors.join(", ") : "No authors added"}</div>{connectionCount > 0 && <button className="connection-count" onClick={() => setSelectedId(paper.id)}>↗ {connectionCount} {connectionCount === 1 ? "connection" : "connections"}</button>}</td>
-                <td className="number-cell">{paper.year || "—"}</td><td className="number-cell" title={paper.citations.toLocaleString()}>{compactNumber(paper.citations)}</td>{!grouped && <td><span className="level-pill" style={{ color: levels[paper.understanding].color, borderColor: levels[paper.understanding].color }}>{paper.understanding} · {levels[paper.understanding].short}</span></td>}<td className="note-cell" onClick={() => setSelectedId(paper.id)}>{truncate(paper.mainQuestions)}</td><td className="note-cell" onClick={() => setSelectedId(paper.id)}>{truncate(paper.mainResults)}</td><td className="note-cell personal" onClick={() => setSelectedId(paper.id)}>{truncate(paper.myQuestions)}</td><td><span className="interest-score" style={{ color: interestColor(paper.interest) }}>{paper.interest}</span></td><td className="link-list">{paper.links.length ? paper.links.slice(0, 2).map((link, index) => <a href={link} target="_blank" rel="noreferrer" key={`${link}-${index}`}>{linkLabel(link)} ↗</a>) : "—"}</td>
+                <td className="number-cell">{paper.year || "—"}</td><td className="number-cell" title={paper.citations.toLocaleString()}>{compactNumber(paper.citations)}</td>{!grouped && <td><span className="level-pill" style={{ color: levels[paper.understanding].color, borderColor: levels[paper.understanding].color }}>{paper.understanding} · {levels[paper.understanding].short}</span></td>}<ExpandableNoteCell value={paper.mainQuestions} label={`main question for ${paper.title}`} expanded={expandedNoteCells.has(mainQuestionsKey)} onToggle={() => toggleNoteCell(mainQuestionsKey)} /><ExpandableNoteCell value={paper.mainResults} label={`main result for ${paper.title}`} expanded={expandedNoteCells.has(mainResultsKey)} onToggle={() => toggleNoteCell(mainResultsKey)} /><ExpandableNoteCell value={paper.myQuestions} label={`my questions for ${paper.title}`} personal expanded={expandedNoteCells.has(myQuestionsKey)} onToggle={() => toggleNoteCell(myQuestionsKey)} /><td><span className="interest-score" style={{ color: interestColor(paper.interest) }}>{paper.interest}</span></td><td className="link-list">{paper.links.length ? paper.links.slice(0, 2).map((link, index) => <a href={link} target="_blank" rel="noreferrer" key={`${link}-${index}`}>{linkLabel(link)} ↗</a>) : "—"}</td>
               </tr>;
             })}</tbody></table></div>
           </div>;
@@ -244,6 +249,27 @@ export default function Home() {
 
 function SortButton({ label, column, current, direction, onSort }: { label: string; column: SortKey; current: SortKey; direction: "asc" | "desc"; onSort: (column: SortKey) => void }) {
   return <button className={`sort-button ${current === column ? "active" : ""}`} onClick={() => onSort(column)}>{label}<span>{current === column ? (direction === "asc" ? "↑" : "↓") : "↕"}</span></button>;
+}
+
+function ExpandableNoteCell({ value, label, personal = false, expanded, onToggle }: { value: string; label: string; personal?: boolean; expanded: boolean; onToggle: () => void }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [previewLines, setPreviewLines] = useState(1);
+
+  useEffect(() => {
+    const button = buttonRef.current;
+    if (!button || expanded) return;
+    const measure = () => {
+      const lineHeight = Number.parseFloat(window.getComputedStyle(button).lineHeight) || 15;
+      const next = Math.max(1, Math.floor(button.clientHeight / lineHeight));
+      setPreviewLines((current) => current === next ? current : next);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(button);
+    measure();
+    return () => observer.disconnect();
+  }, [expanded, value]);
+
+  return <td className={`note-cell ${personal ? "personal" : ""} ${expanded ? "expanded" : ""}`}>{value ? <button ref={buttonRef} className="note-preview" aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`} onClick={onToggle}><span className="note-preview-text" style={{ WebkitLineClamp: expanded ? undefined : previewLines }}>{value}</span></button> : <span className="empty-note">—</span>}</td>;
 }
 
 type RailLine = { d: string; color: string; y1: number; y2: number };

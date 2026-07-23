@@ -27,6 +27,15 @@ test("includes local persistence and relationship features", async () => {
   assert.match(page, /lineConnectionBundles/);
   assert.match(page, /Common author lines/);
   assert.match(page, /Details only/);
+  assert.match(page, /expandedNoteCells/);
+  assert.match(page, /aria-expanded/);
+  assert.doesNotMatch(page, /className="note-cell" onClick/);
+  assert.match(styles, /\.note-preview \{[^}]*position: absolute/);
+  assert.match(styles, /\.note-cell\.expanded \.note-preview \{[^}]*position: static/);
+  assert.match(page, /function ExpandableNoteCell/);
+  assert.match(page, /WebkitLineClamp/);
+  assert.doesNotMatch(styles, /cursor: zoom-/);
+  assert.doesNotMatch(styles, /\.note-preview:hover/);
   assert.doesNotMatch(page, /Open first paper/);
   assert.match(layout, /title: "papers"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);

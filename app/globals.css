@@ -92,8 +92,14 @@ tbody tr:hover td, tbody tr.selected-row td { background: #eff6ff; }
 .connection-count { margin-top: 5px; padding: 0; border: 0; background: transparent; color: var(--accent-dark); font-size: 11px; cursor: pointer; }
 .number-cell { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; font-variant-numeric: tabular-nums; }
 .interest-score { color: inherit; font-weight: 700; font-variant-numeric: tabular-nums; }
-.note-cell { color: #344054; font-size: 11px; line-height: 1.4; cursor: pointer; }
+.note-cell { position: relative; height: 1px; color: #344054; font-size: 11px; line-height: 1.4; }
 .note-cell.personal { color: #594a72; }
+.note-preview { position: absolute; inset: 5px; display: block; overflow: hidden; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; text-align: left; cursor: pointer; }
+.note-preview-text { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-cell.expanded { height: auto; }
+.note-cell.expanded .note-preview { position: static; width: 100%; overflow: visible; }
+.note-cell.expanded .note-preview-text { display: block; overflow: visible; }
+.empty-note { color: var(--muted); }
 .link-list { font-size: 11px; }
 .link-list a { display: block; margin-bottom: 4px; color: var(--accent-dark); text-underline-offset: 2px; }
 .level-pill { display: inline-block; border-left: 3px solid; padding-left: 5px; font-size: 11px; white-space: nowrap; }
