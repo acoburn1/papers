@@ -1,4 +1,3 @@
-# Paper Ledger
 
 A private, local-first research paper tracker. It combines a compact spreadsheet-style library with structured reading notes, understanding and interest scores, and bidirectional relationships between papers.
 
